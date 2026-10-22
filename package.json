@@ -1,0 +1,37 @@
+{
+  "name": "agy-auto-context",
+  "displayName": "agy auto context",
+  "description": "Automatic selection context for Antigravity (agy): writes the current editor selection range (path + 1-based lines, no text) to ~/.cache/agy-auto-context for the bundled agy PreInvocation hook, and can show 'N lines selected' in a one-row view under the Antigravity chat.",
+  "version": "0.4.0",
+  "publisher": "maye",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maye4/agy-auto-context.git"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "views": {
+      "antigravity-sidebar": [
+        {
+          "id": "agyAutoContext.view",
+          "name": "Selection",
+          "visibility": "hidden",
+          "icon": "$(file)"
+        }
+      ]
+    }
+  }
+}
