@@ -20,8 +20,9 @@ It has two parts:
   active editor's primary selection range (absolute path, 1-based inclusive lines, no text) to
   `~/.cache/agy-auto-context/<sessionId>-<pid>.json`. The record is one compact JSON line, written
   atomically (tmp + rename, 40 ms debounce); the directory is 0700 and the file 0600. `selection` is
-  `null` when nothing is selected or the document is not a `file:` URI. Optional one-row view
-  "N lines selected" under the Antigravity chat (hidden by default).
+  `null` when nothing is selected or the document is not a `file:` URI. Shows the selection in
+  the status bar (`agy: # lines selected` or `agy: # lines selected: filename: L#-L#`), plus a
+  one-row view "N lines selected" under the Antigravity chat (collapsed by default).
 - **agy PreInvocation hook** (`hook/agy-auto-context.sh`, POSIX `sh` + `jq`): picks the record of the
   live VS Code window whose workspace matches the conversation (the focused one first, then the newest),
   and injects the message above as an ephemeral message. It computes the message on the turn's first
@@ -45,10 +46,10 @@ Requirements: `jq` (`/usr/bin/jq` or on `PATH`), `python3` (only to build the vs
 ```sh
 git clone https://github.com/maye4/agy-auto-context.git ~/code/agy-auto-context
 cd ~/code/agy-auto-context
-python3 build_vsix.py                      # -> agy-auto-context-0.4.0.vsix
-code --install-extension agy-auto-context-0.4.0.vsix
+python3 build_vsix.py                      # -> agy-auto-context-2026.11.15.vsix
+code --install-extension agy-auto-context-2026.11.15.vsix
 # in a WSL / Remote window use the server CLI instead:
-#   ~/.vscode-server/bin/<commit>/bin/code-server --install-extension agy-auto-context-0.4.0.vsix
+#   ~/.vscode-server/bin/<commit>/bin/code-server --install-extension agy-auto-context-2026.11.15.vsix
 ```
 
 Register the hook in `~/.gemini/config/hooks.json` (shared by agy in VS Code and the agy CLI; use an
@@ -60,10 +61,21 @@ absolute path, and merge with existing hooks if the file already exists):
 
 Reload the VS Code window. Check with `ls -l ~/.cache/agy-auto-context/`.
 
+### Status bar indicator
+
+The extension shows a right-aligned status bar item (`agy auto context`), always shown so it remains
+available in the status bar right-click menu to toggle visibility. Click the status bar item (or set
+`agyAutoContext.statusBarFormat` in Settings) to switch between two formats. This application-scoped
+setting applies across workspaces:
+
+- `concise` (default): `agy: # lines selected` (e.g. `agy: 7 lines selected`, or `agy: 0 lines selected`)
+- `detailed`: `agy: # lines selected: filename: L#-L#` (e.g. `agy: 7 lines selected: a.ts: L12-L18`, or `agy: 0 lines selected`)
+
 ### Optional "N lines selected" row
 
-The extension contributes a view "Selection" (`agyAutoContext.view`) into Antigravity's sidebar
-container, hidden by default. To show it, right-click the Antigravity sidebar title and check
+The extension contributes a view "Selection" (`agyAutoContext.selectionView`) into Antigravity's sidebar
+container, collapsed by default (`"visibility": "collapsed"`). The new view ID resets the previous
+hidden state on upgrade, so it starts collapsed for existing installs too. To hide it, right-click the Antigravity sidebar title and uncheck
 **Selection**. Collapsed, it is a single header row showing `N lines selected`; expanded, one row with a
 `path:La-Lb` tooltip. VS Code 1.142 cannot hide a pane header or make it non-collapsible in a container
 with two or more views, and it renders the title capitalised (`7 Lines Selected`). The divider line is the

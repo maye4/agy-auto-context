@@ -4,22 +4,52 @@ const Module = require('module');
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'selexp-')) + '/sel';
 process.env.AGY_AUTO_CONTEXT_DIR = dir;
-const L = { sel: [], ed: [], win: [], ws: [] };
+const L = { sel: [], ed: [], win: [], ws: [], cfg: [] };
 const ev = (k) => (fn) => { L[k].push(fn); return { dispose() { L[k] = L[k].filter((f) => f !== fn); } }; };
 const pos = (line, character) => ({ line, character });
 const mkSel = (a, b, c, d) => ({ start: pos(a, b), end: pos(c, d), isEmpty: a === c && b === d });
 const ed = (scheme, fsPath, s) => ({ document: { uri: { scheme, fsPath } }, selection: s });
 const probe = { title: undefined, description: undefined, message: undefined, disposed: false, viewId: null, dispose() { this.disposed = true; } };
+const sb = {
+  id: null, alignment: null, priority: null, name: undefined, command: undefined, text: '', tooltip: undefined,
+  visible: false, shows: 0, hides: 0, disposed: false,
+  show() { this.visible = true; this.shows++; },
+  hide() { this.visible = false; this.hides++; },
+  dispose() { this.disposed = true; },
+};
+const cmds = {};
+const cfgStore = { statusBarFormat: 'concise' };
+let quickPickResult = undefined;
 class EventEmitter { constructor() { this.l = []; this.event = (f) => { this.l.push(f); return { dispose() {} }; }; } fire(x) { this.l.forEach((f) => f(x)); } dispose() { this.l = []; } }
 class TreeItem { constructor(label, cs) { this.label = label; this.collapsibleState = cs; } }
 class ThemeIcon { constructor(id) { this.id = id; } }
 const vscode = {
   EventEmitter, TreeItem, ThemeIcon, TreeItemCollapsibleState: { None: 0 },
+  StatusBarAlignment: { Left: 1, Right: 2 },
+  ConfigurationTarget: { Global: 1 },
   env: { sessionId: 'sess/1:x' },
+  commands: {
+    registerCommand: (id, fn) => { cmds[id] = fn; return { dispose() { delete cmds[id]; } }; },
+  },
   workspace: { workspaceFolders: [{ uri: { scheme: 'file', fsPath: '/w/proj' } }, { uri: { scheme: 'vscode-vfs', fsPath: '/x' } }],
+    getConfiguration: () => ({
+      get: (k) => cfgStore[k],
+      update: async (k, v) => {
+        cfgStore[k] = v;
+        L.cfg.forEach((f) => f({ affectsConfiguration: (q) => q === `agyAutoContext.${k}` }));
+      },
+    }),
+    onDidChangeConfiguration: ev('cfg'),
     onDidChangeWorkspaceFolders: ev('ws') },
   window: { activeTextEditor: undefined, state: { focused: true },
     createTreeView: (id, opts) => { probe.viewId = id; probe.provider = opts.treeDataProvider; return probe; },
+    createStatusBarItem: (id, alignment, priority) => {
+      sb.id = id; sb.alignment = alignment; sb.priority = priority; return sb;
+    },
+    showQuickPick: async (items) => {
+      if (quickPickResult === undefined) return undefined;
+      return items.find((i) => i.label === quickPickResult);
+    },
     onDidChangeTextEditorSelection: ev('sel'), onDidChangeActiveTextEditor: ev('ed'), onDidChangeWindowState: ev('win') },
 };
 const orig = Module._load;
@@ -70,7 +100,7 @@ const read = () => { const t = fs.readFileSync(file, 'utf8'); assert.strictEqual
   vscode.window.state.focused = false; L.win.forEach((f) => f({ focused: false })); await sleep(60);
   assert.strictEqual(read().focused, false); console.log('ok   focus tracked');
   // one-row view in Antigravity's container: header title = "N lines selected", row with icon + tooltip
-  assert.strictEqual(probe.viewId, 'agyAutoContext.view');
+  assert.strictEqual(probe.viewId, 'agyAutoContext.selectionView');
   let fired = 0; probe.provider.onDidChangeTreeData(() => fired++);
   set(ed('file', '/w/proj/a.ts', mkSel(11, 2, 17, 4))); await sleep(60);
   assert.strictEqual(probe.title, '7 lines selected');
@@ -91,12 +121,51 @@ const read = () => { const t = fs.readFileSync(file, 'utf8'); assert.strictEqual
   set(ed('untitled', 'U', mkSel(0, 0, 5, 0))); await sleep(60); assert.strictEqual(probe.title, '', 'empty for non-file');
   set(undefined); await sleep(60); assert.strictEqual(probe.title, '', 'empty with no editor');
   console.log('ok   view row follows selection (title/description/row/tooltip)');
+  // status bar hint: concise ("agy: # lines selected") + detailed ("agy: # lines selected: filename: L#-L#"), switchable via click/setting
+  assert.strictEqual(sb.id, 'agyAutoContext.selection');
+  assert.strictEqual(sb.alignment, vscode.StatusBarAlignment.Right);
+  assert.strictEqual(sb.name, 'agy auto context');
+  assert.strictEqual(sb.command, 'agyAutoContext.selectStatusBarFormat');
+  assert.strictEqual(sb.visible, true);
+  set(ed('file', '/w/proj/a.ts', mkSel(11, 2, 17, 4))); await sleep(60);
+  assert.strictEqual(sb.visible, true);
+  assert.strictEqual(sb.text, 'agy: 7 lines selected');
+  assert.strictEqual(sb.tooltip, '/w/proj/a.ts:L12-L18 (1-based, inclusive) — click to change format');
+  const s0 = sb.shows;
+  selc(mkSel(11, 2, 17, 4)); await sleep(60); assert.strictEqual(sb.shows, s0, 'no redundant status bar update when unchanged');
+  // switch to detailed via QuickPick command
+  quickPickResult = 'detailed';
+  await cmds['agyAutoContext.selectStatusBarFormat']();
+  assert.strictEqual(cfgStore.statusBarFormat, 'detailed');
+  assert.strictEqual(sb.text, 'agy: 7 lines selected: a.ts: L12-L18');
+  selc(mkSel(4, 0, 4, 3)); await sleep(60);
+  assert.strictEqual(sb.text, 'agy: 1 line selected: a.ts: L5-L5');
+  // switch back to concise; cancel QuickPick leaves setting unchanged
+  quickPickResult = undefined;
+  await cmds['agyAutoContext.selectStatusBarFormat']();
+  assert.strictEqual(cfgStore.statusBarFormat, 'detailed');
+  quickPickResult = 'concise';
+  await cmds['agyAutoContext.selectStatusBarFormat']();
+  assert.strictEqual(cfgStore.statusBarFormat, 'concise');
+  assert.strictEqual(sb.text, 'agy: 1 line selected');
+  selc(mkSel(4, 0, 6, 0)); await sleep(60);
+  assert.strictEqual(sb.text, 'agy: 2 lines selected', 'endLine rule shared with status bar');
+  selc(mkSel(4, 3, 4, 3)); await sleep(60);
+  assert.strictEqual(sb.visible, true, 'status bar stays shown when selection cleared');
+  assert.strictEqual(sb.text, 'agy: 0 lines selected');
+  assert.strictEqual(sb.tooltip, 'agy-auto-context: no active file selection — click to change format');
+  set(ed('untitled', 'U', mkSel(0, 0, 5, 0))); await sleep(60);
+  assert.strictEqual(sb.visible, true); assert.strictEqual(sb.text, 'agy: 0 lines selected', '0 lines for non-file');
+  set(undefined); await sleep(60);
+  assert.strictEqual(sb.visible, true); assert.strictEqual(sb.text, 'agy: 0 lines selected', '0 lines with no editor');
+  console.log('ok   status bar concise/detailed formats + click menu + stays shown');
   // no tmp leftovers
   assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')), []); console.log('ok   no tmp files');
   // deactivate: unlink + listeners disposed
   ctx.subscriptions.forEach((d) => d.dispose()); ext.deactivate();
   assert.ok(!fs.existsSync(file), 'unlinked');
-  assert.ok(probe.disposed, 'view disposed'); assert.strictEqual(L.sel.length + L.ed.length + L.win.length + L.ws.length, 0);
+  assert.ok(probe.disposed, 'view disposed'); assert.ok(sb.disposed, 'status bar disposed');
+  assert.strictEqual(L.sel.length + L.ed.length + L.win.length + L.ws.length + L.cfg.length, 0);
   set(ed('file', '/w/proj/a.ts', mkSel(1, 0, 3, 0))); await sleep(60);
   assert.ok(!fs.existsSync(file), 'no write after deactivate'); console.log('ok   deactivate unlinks + disposes');
   fs.rmSync(path.dirname(dir), { recursive: true, force: true });

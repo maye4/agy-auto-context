@@ -11,6 +11,8 @@
 // 0.4.0: renamed from maye.selection-export (record dir ~/.cache/agy-auto-context, view agyAutoContext.view).
 // 0.3.1: the view is hidden by default ("visibility": "hidden"); show it via right-click on the
 // Antigravity container header > Selection.
+// 2026.11.15: add the status bar hint and give the collapsed-by-default view a new ID to reset
+// previously saved hidden state on upgrade.
 const vscode = require('vscode');
 const fs = require('fs');
 const os = require('os');
@@ -28,7 +30,12 @@ let view = null;
 let viewKey = '';
 let rowItem = null;
 let onRowChange = null;
-const VIEW_ID = 'agyAutoContext.view';
+let statusBar = null;
+let statusKey = null;
+const VIEW_ID = 'agyAutoContext.selectionView';
+const STATUS_BAR_ID = 'agyAutoContext.selection';
+const SELECT_FORMAT_CMD = 'agyAutoContext.selectStatusBarFormat';
+const FORMAT_CONFIG_KEY = 'statusBarFormat';
 
 function selectionOf(editor) {
   if (!editor || !editor.document) return null;
@@ -60,7 +67,9 @@ function buildRecord() {
 function writeNow() {
   timer = null;
   if (!active) return;
-  try { updateView(); } catch (e) { /* ignore */ }
+  const sel = selectionOf(vscode.window.activeTextEditor);
+  try { updateView(sel); } catch (e) { /* ignore */ }
+  try { updateStatusBar(sel); } catch (e) { /* ignore */ }
   try {
     const rec = buildRecord();
     const key = JSON.stringify(Object.assign({}, rec, { ts: 0 }));
@@ -81,19 +90,65 @@ function linesText(sel) {
   return `${n} line${n === 1 ? '' : 's'} selected`;
 }
 
-function updateView() {
+function statusBarFormat() {
+  const cfg = vscode.workspace && typeof vscode.workspace.getConfiguration === 'function'
+    ? vscode.workspace.getConfiguration('agyAutoContext')
+    : null;
+  return cfg && cfg.get(FORMAT_CONFIG_KEY) === 'detailed' ? 'detailed' : 'concise';
+}
+
+function statusBarText(sel, fmt) {
+  if (!sel) return 'agy: 0 lines selected';
+  if (fmt === 'detailed') {
+    return `agy: ${linesText(sel)}: ${path.basename(sel.path)}: L${sel.startLine}-L${sel.endLine}`;
+  }
+  return `agy: ${linesText(sel)}`;
+}
+
+function updateStatusBar(sel) {
+  if (!statusBar) return;
+  const s = active ? sel : null;
+  const fmt = statusBarFormat();
+  const key = fmt + '\n' + (s ? `${s.path}:${s.startLine}-${s.endLine}` : '');
+  if (key === statusKey) return;
+  statusKey = key;
+  statusBar.text = statusBarText(s, fmt);
+  statusBar.tooltip = s
+    ? `${s.path}:L${s.startLine}-L${s.endLine} (1-based, inclusive) — click to change format`
+    : 'agy-auto-context: no active file selection — click to change format';
+  // Keep shown so VS Code always lists it in the status bar right-click visibility menu
+  statusBar.show();
+}
+
+async function selectStatusBarFormat() {
+  const current = statusBarFormat();
+  const items = [
+    { label: 'concise', description: 'agy: # lines selected' + (current === 'concise' ? ' (current)' : '') },
+    { label: 'detailed', description: 'agy: # lines selected: filename: L#-L#' + (current === 'detailed' ? ' (current)' : '') },
+  ];
+  const picked = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select agy auto context status bar format',
+  });
+  if (!picked) return;
+  const cfg = vscode.workspace.getConfiguration('agyAutoContext');
+  const target = vscode.ConfigurationTarget ? vscode.ConfigurationTarget.Global : true;
+  await cfg.update(FORMAT_CONFIG_KEY, picked.label, target);
+  try { updateStatusBar(selectionOf(vscode.window.activeTextEditor)); } catch (e) { /* ignore */ }
+}
+
+function updateView(sel) {
   if (!view) return;
-  const sel = active ? selectionOf(vscode.window.activeTextEditor) : null;
-  const text = sel ? linesText(sel) : '';
-  const tip = sel ? `${sel.path}:L${sel.startLine}-L${sel.endLine} (1-based, inclusive)` : '';
+  const s = active ? sel : null;
+  const text = s ? linesText(s) : '';
+  const tip = s ? `${s.path}:L${s.startLine}-L${s.endLine} (1-based, inclusive)` : '';
   const key = text + '\n' + tip;
   if (key === viewKey) return;
   viewKey = key;
   // header row: the title is the only header text VS Code shows while the view is collapsed
   // (the description is CSS-hidden on collapsed panes); the description shows when expanded
   view.title = text;
-  view.description = sel ? `${path.basename(sel.path)}:L${sel.startLine}-L${sel.endLine}` : '';
-  if (sel) {
+  view.description = s ? `${path.basename(s.path)}:L${s.startLine}-L${s.endLine}` : '';
+  if (s) {
     rowItem = new vscode.TreeItem(text, vscode.TreeItemCollapsibleState.None);
     rowItem.id = 'sel';
     rowItem.iconPath = new vscode.ThemeIcon('file');
@@ -101,7 +156,7 @@ function updateView() {
   } else {
     rowItem = null;
   }
-  view.message = sel ? undefined : 'No selection';
+  view.message = s ? undefined : 'No selection';
   if (onRowChange) onRowChange.fire();
 }
 
@@ -146,6 +201,25 @@ function activate(context) {
   } catch (e) {
     view = null; // e.g. Antigravity not installed (container missing): records still work
   }
+  try {
+    statusBar = vscode.window.createStatusBarItem(STATUS_BAR_ID, vscode.StatusBarAlignment.Right, 101);
+    statusBar.name = 'agy auto context';
+    statusBar.command = SELECT_FORMAT_CMD;
+    context.subscriptions.push(statusBar);
+    updateStatusBar(selectionOf(vscode.window.activeTextEditor));
+  } catch (e) {
+    statusBar = null; // records still work even if status bar API is unavailable
+  }
+  if (vscode.commands && typeof vscode.commands.registerCommand === 'function') {
+    context.subscriptions.push(vscode.commands.registerCommand(SELECT_FORMAT_CMD, selectStatusBarFormat));
+  }
+  if (typeof vscode.workspace.onDidChangeConfiguration === 'function') {
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration(`agyAutoContext.${FORMAT_CONFIG_KEY}`)) {
+        try { updateStatusBar(selectionOf(vscode.window.activeTextEditor)); } catch (_) { /* ignore */ }
+      }
+    }));
+  }
   context.subscriptions.push(
     vscode.window.onDidChangeTextEditorSelection((e) => {
       if (e.textEditor === vscode.window.activeTextEditor) schedule();
@@ -166,8 +240,10 @@ function stop() {
   lastKey = '';
   if (view) { try { view.dispose(); } catch (e) { /* ignore */ } }
   view = null; rowItem = null; viewKey = ''; onRowChange = null;
+  if (statusBar) { try { statusBar.dispose(); } catch (e) { /* ignore */ } }
+  statusBar = null; statusKey = null;
 }
 
 function deactivate() { stop(); }
 
-module.exports = { activate, deactivate, _test: { selectionOf, buildRecord, linesText } };
+module.exports = { activate, deactivate, _test: { selectionOf, buildRecord, linesText, statusBarText } };

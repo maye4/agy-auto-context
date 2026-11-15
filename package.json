@@ -1,8 +1,8 @@
 {
   "name": "agy-auto-context",
   "displayName": "agy auto context",
-  "description": "Automatic selection context for Antigravity (agy): writes the current editor selection range (path + 1-based lines, no text) to ~/.cache/agy-auto-context for the bundled agy PreInvocation hook, and can show 'N lines selected' in a one-row view under the Antigravity chat.",
-  "version": "0.4.0",
+  "description": "Automatic selection context for Antigravity (agy): writes the current editor selection range (path + 1-based lines, no text) to ~/.cache/agy-auto-context for the bundled agy PreInvocation hook, shows the selected line range in the status bar, and shows 'N lines selected' in a collapsible one-row view under the Antigravity chat.",
+  "version": "2026.11.15",
   "publisher": "maye",
   "license": "MIT",
   "repository": {
@@ -23,12 +23,37 @@
   ],
   "main": "./extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "agyAutoContext.selectStatusBarFormat",
+        "title": "agy auto context: Select Status Bar Format"
+      }
+    ],
+    "configuration": {
+      "title": "agy auto context",
+      "properties": {
+        "agyAutoContext.statusBarFormat": {
+          "type": "string",
+          "scope": "application",
+          "enum": [
+            "concise",
+            "detailed"
+          ],
+          "default": "concise",
+          "enumDescriptions": [
+            "agy: # lines selected",
+            "agy: # lines selected: filename: L#-L#"
+          ],
+          "description": "Format of the agy auto context status bar indicator."
+        }
+      }
+    },
     "views": {
       "antigravity-sidebar": [
         {
-          "id": "agyAutoContext.view",
+          "id": "agyAutoContext.selectionView",
           "name": "Selection",
-          "visibility": "hidden",
+          "visibility": "collapsed",
           "icon": "$(file)"
         }
       ]

@@ -147,6 +147,19 @@ divider is `sideBarSectionHeader.border` (user can set it transparent globally).
 regardless of who owns the container); with it hidden the Antigravity sidebar is a single view again.
 Show it via right-click on the sidebar title > Selection.
 
+**2026.11.15:** `"visibility"` changed to `"collapsed"` and the view ID changed from
+`agyAutoContext.view` to `agyAutoContext.selectionView`. The new ID clears the old saved hidden state,
+so existing installs receive the collapsed default on upgrade.
+
+### 4.1b Status bar indicator (2026.11.15)
+Alongside the optional sidebar view, 2026.11.15 adds a right-aligned status bar item
+(`agyAutoContext.selection`, priority 101, always `.show()`n so VS Code keeps it in the status bar
+right-click visibility menu). Clicking it invokes `agyAutoContext.selectStatusBarFormat` (QuickPick)
+to update `agyAutoContext.statusBarFormat` between `concise` (`agy: # lines selected`, default) and
+`detailed` (`agy: # lines selected: filename: L#-L#`). The setting is application-scoped, so a
+workspace override cannot make the chooser appear to have no effect. When `selection` is `null`, it
+shows `agy: 0 lines selected`.
+
 ### 4.2 Hook `hook/agy-auto-context.sh`
 - `sh` + `/usr/bin/jq` (falls back to `jq` on PATH; no jq → `{}`).
 - Steps: read stdin → skip CLI/subagent → if `invocationNum` (missing = 0) is not 0, re-inject the message
